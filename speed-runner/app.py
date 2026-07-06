@@ -1,10 +1,16 @@
+import asyncio
+import hmac
+import html
 import io
+import ipaddress
 import os
+import socket
 import time
 from datetime import datetime, timezone
+from functools import lru_cache
 from urllib.parse import urlparse
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from PIL import Image, ImageChops, ImageDraw, ImageFont, ImageStat
 from playwright.async_api import async_playwright
@@ -16,6 +22,28 @@ DEFAULT_TIMEOUT_MS = int(os.getenv("DEFAULT_TIMEOUT_MS", "60000"))
 VIEWPORT_WIDTH = int(os.getenv("VIEWPORT_WIDTH", "1365"))
 VIEWPORT_HEIGHT = int(os.getenv("VIEWPORT_HEIGHT", "768"))
 MAX_VISUAL_WAIT_MS = int(os.getenv("MAX_VISUAL_WAIT_MS", "15000"))
+
+SPEED_RUNNER_API_KEY = os.getenv("SPEED_RUNNER_API_KEY", "").strip()
+ALLOW_PUBLIC_ACCESS = os.getenv("ALLOW_PUBLIC_ACCESS", "false").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "y",
+}
+
+ALLOWED_HOSTS = [
+    item.strip().lower().lstrip(".")
+    for item in os.getenv("ALLOWED_HOSTS", "").split(",")
+    if item.strip()
+]
+
+BLOCKED_HOSTNAMES = {
+    "localhost",
+    "metadata",
+    "metadata.google.internal",
+    "host.docker.internal",
+    "kubernetes.default",
+}
 
 USER_AGENT = os.getenv(
     "USER_AGENT",
@@ -31,6 +59,8 @@ async def root():
         "ok": True,
         "service": "ecom-speed-runner",
         "endpoints": ["/speed-report-json", "/speed-report-image"],
+        "auth": "disabled" if ALLOW_PUBLIC_ACCESS else "required",
+        "allowed_hosts_configured": bool(ALLOWED_HOSTS),
     }
 
 
@@ -66,11 +96,132 @@ def fmt_time(seconds):
     return f"{seconds:.1f}s"
 
 
+def escape_html(value):
+    return html.escape(str(value or ""), quote=False)
+
+
 def hostname(url):
     try:
-        return urlparse(url).netloc.lower().replace("www.", "")
+        parsed = urlparse(url)
+        return (parsed.hostname or "").lower().strip(".")
     except Exception:
         return ""
+
+
+def host_matches(host, allowed_host):
+    host = (host or "").lower().strip(".")
+    allowed_host = (allowed_host or "").lower().strip(".")
+
+    if not host or not allowed_host:
+        return False
+
+    return host == allowed_host or host.endswith(f".{allowed_host}")
+
+
+def host_allowed_by_env(host):
+    if not ALLOWED_HOSTS:
+        return True
+
+    return any(host_matches(host, allowed_host) for allowed_host in ALLOWED_HOSTS)
+
+
+def ip_is_public(ip_value):
+    try:
+        ip = ipaddress.ip_address(ip_value)
+    except ValueError:
+        return False
+
+    if ip.is_private:
+        return False
+    if ip.is_loopback:
+        return False
+    if ip.is_link_local:
+        return False
+    if ip.is_reserved:
+        return False
+    if ip.is_multicast:
+        return False
+    if ip.is_unspecified:
+        return False
+
+    return True
+
+
+@lru_cache(maxsize=512)
+def host_resolves_to_public_ips(host):
+    host = (host or "").lower().strip(".")
+
+    if not host:
+        return False
+
+    if host in BLOCKED_HOSTNAMES or host.endswith(".localhost"):
+        return False
+
+    try:
+        ipaddress.ip_address(host)
+        return ip_is_public(host)
+    except ValueError:
+        pass
+
+    try:
+        addresses = socket.getaddrinfo(host, None)
+    except Exception:
+        return False
+
+    if not addresses:
+        return False
+
+    for address in addresses:
+        ip_value = address[4][0]
+        if not ip_is_public(ip_value):
+            return False
+
+    return True
+
+
+def validate_url(url, enforce_allowlist=True):
+    parsed = urlparse(str(url or "").strip())
+
+    if parsed.scheme not in {"http", "https"}:
+        return False, "URL must use http or https"
+
+    host = (parsed.hostname or "").lower().strip(".")
+
+    if not host:
+        return False, "URL host is empty"
+
+    if enforce_allowlist and not host_allowed_by_env(host):
+        return False, "URL host is not allowed"
+
+    if not host_resolves_to_public_ips(host):
+        return False, "URL host is not public"
+
+    return True, ""
+
+
+async def require_api_key(request: Request):
+    if ALLOW_PUBLIC_ACCESS:
+        return
+
+    if not SPEED_RUNNER_API_KEY:
+        raise HTTPException(
+            status_code=503,
+            detail="SPEED_RUNNER_API_KEY is not configured",
+        )
+
+    provided = (
+        request.headers.get("x-api-key")
+        or request.headers.get("x-speed-runner-key")
+        or ""
+    ).strip()
+
+    authorization = request.headers.get("authorization", "").strip()
+
+    if authorization.lower().startswith("bearer "):
+        provided = authorization[7:].strip()
+
+    if not provided or not hmac.compare_digest(provided, SPEED_RUNNER_API_KEY):
+        raise HTTPException(status_code=401, detail="Invalid API key")
 
 
 def is_image(url, resource_type):
@@ -83,7 +234,7 @@ def is_image(url, resource_type):
 def source_group(url, main_host):
     h = hostname(url)
 
-    if main_host and main_host in h:
+    if main_host and host_matches(h, main_host):
         return "origin"
 
     if any(
@@ -167,6 +318,10 @@ def normalize_site(item, fallback_name):
     if not url:
         return None
 
+    ok, _ = validate_url(url, enforce_allowlist=True)
+    if not ok:
+        return None
+
     name = str(item.get("name") or item.get("title") or fallback_name).strip()
     if not name:
         name = fallback_name
@@ -222,6 +377,7 @@ async def measure_site(browser, site, timeout_ms):
     requests = {}
     completed = []
     failed = []
+    pending_tasks = set()
 
     context = None
     page = None
@@ -236,10 +392,21 @@ async def measure_site(browser, site, timeout_ms):
 
         page = await context.new_page()
 
+        async def route_guard(route):
+            ok, _ = validate_url(route.request.url, enforce_allowlist=False)
+
+            if not ok:
+                await route.abort()
+                return
+
+            await route.continue_()
+
+        await page.route("**/*", route_guard)
+
         def on_request(request):
             requests[request] = time.time()
 
-        async def on_request_finished(request):
+        async def collect_request_finished(request):
             started = requests.pop(request, None)
             if not started:
                 return
@@ -259,6 +426,11 @@ async def measure_site(browser, site, timeout_ms):
                     "source": source_group(request.url, main_host),
                 }
             )
+
+        def on_request_finished(request):
+            task = asyncio.create_task(collect_request_finished(request))
+            pending_tasks.add(task)
+            task.add_done_callback(pending_tasks.discard)
 
         def on_request_failed(request):
             started = requests.pop(request, None)
@@ -294,6 +466,11 @@ async def measure_site(browser, site, timeout_ms):
             await page.wait_for_load_state("load", timeout=3000)
         except Exception:
             pass
+
+        if pending_tasks:
+            _, pending = await asyncio.wait(pending_tasks, timeout=5)
+            for task in pending:
+                task.cancel()
 
         try:
             nav = await page.evaluate(
@@ -383,6 +560,9 @@ async def measure_site(browser, site, timeout_ms):
             },
         }
     finally:
+        for task in list(pending_tasks):
+            task.cancel()
+
         try:
             if page:
                 await page.close()
@@ -407,6 +587,7 @@ def build_speed_json(results, payload):
     slow_3 = safe_int(metric(primary, "slow_3"))
     max_request = safe_float(metric(primary, "max_request_sec"))
     image_max = safe_float(metric(primary, "image_max_sec"))
+    load_error = metric(primary, "load_error", "")
 
     thresholds = ((payload.get("speed") or {}).get("thresholds") or {})
     ok_visual = safe_float(thresholds.get("ok_visual_sec"), 6)
@@ -418,6 +599,10 @@ def build_speed_json(results, payload):
         status = "bad"
         status_title = "🔴 no data"
         conclusion = "the primary page could not be measured correctly."
+    elif load_error:
+        status = "warn"
+        status_title = "⚠️ warning"
+        conclusion = "the primary page returned a navigation error during measurement. Check runner logs and page availability."
     elif visual <= ok_visual and slow_3 <= ok_slow_3:
         status = "ok"
         status_title = "✅ ok"
@@ -436,22 +621,23 @@ def build_speed_json(results, payload):
     lines = [
         f"⚡ <b>Speed: {status_title}</b>",
         "",
-        f"<b>{primary_name}:</b> first screen {fmt_time(visual)}, slow requests &gt;3s — {slow_3}.",
+        f"<b>{escape_html(primary_name)}:</b> first screen {fmt_time(visual)}, slow requests &gt;3s — {slow_3}.",
     ]
 
     references = {}
 
     for index, item in enumerate(results[1:], start=1):
         ref_visual = safe_float(metric(item, "visual_ready_sec"))
-        lines.append(f"<b>{item.get('name')}:</b> first screen {fmt_time(ref_visual)}.")
+        item_name = item.get("name") or f"Reference {index}"
+        lines.append(f"<b>{escape_html(item_name)}:</b> first screen {fmt_time(ref_visual)}.")
         references[f"reference_{index}"] = {
-            "name": item.get("name"),
+            "name": item_name,
             "url": item.get("url"),
             "visual_sec": ref_visual,
             "slow_3": safe_int(metric(item, "slow_3")),
         }
 
-    lines.extend(["", f"<b>Conclusion:</b> {conclusion}"])
+    lines.extend(["", f"<b>Conclusion:</b> {escape_html(conclusion)}"])
 
     return {
         "ok": status == "ok",
@@ -465,6 +651,7 @@ def build_speed_json(results, payload):
             "slow_3": slow_3,
             "max_request_sec": max_request,
             "image_max_sec": image_max,
+            "load_error": load_error,
         },
         "references": references,
         "results": results,
@@ -534,6 +721,34 @@ def text_fit(draw, text, font, max_width):
         result = result[:-1]
 
     return result + "…"
+
+
+def render_error_png(message):
+    width = 1200
+    height = 360
+    margin = 36
+
+    colors = {
+        "bg": "#12151c",
+        "panel": "#181c25",
+        "text": "#f2f4f8",
+        "muted": "#aeb6c5",
+        "bad": "#a73636",
+    }
+
+    image = Image.new("RGB", (width, height), colors["bg"])
+    draw = ImageDraw.Draw(image)
+
+    font_title = load_font(30, True)
+    font_text = load_font(18)
+
+    draw.rounded_rectangle([margin, margin, width - margin, height - margin], radius=18, fill=colors["panel"])
+    draw.text((margin + 24, margin + 28), "Speed report — error", fill=colors["text"], font=font_title)
+    draw.rounded_rectangle([margin + 24, margin + 94, width - margin - 24, margin + 160], radius=10, fill=colors["bad"])
+    draw.text((margin + 44, margin + 116), text_fit(draw, message, font_text, width - margin * 2 - 88), fill="#ffffff", font=font_text)
+    draw.text((margin + 24, margin + 210), "Check request payload, API key, allowed hosts, and runner logs.", fill=colors["muted"], font=font_text)
+
+    return image
 
 
 def render_png(results, project_name=""):
@@ -702,7 +917,9 @@ async def run_speed_results(payload):
 
 
 @app.post("/speed-report-json")
-async def speed_report_json(payload: dict):
+async def speed_report_json(request: Request, payload: dict):
+    await require_api_key(request)
+
     results = await run_speed_results(payload)
 
     if not results:
@@ -710,23 +927,28 @@ async def speed_report_json(payload: dict):
             "ok": False,
             "status": "error",
             "status_title": "❌ error",
-            "telegramMessage": "❌ <b>Speed: error</b>\n\nNo valid page URL was provided.",
+            "telegramMessage": "❌ <b>Speed: error</b>\n\nNo valid public page URL was provided.",
             "primary": {},
             "references": {},
             "results": [],
-            "errors": ["No valid page URL was provided"],
+            "errors": ["No valid public page URL was provided"],
         }
 
     return build_speed_json(results, payload)
 
 
 @app.post("/speed-report-image")
-async def speed_report_image(payload: dict):
+async def speed_report_image(request: Request, payload: dict):
+    await require_api_key(request)
+
     results = await run_speed_results(payload)
     project = payload.get("project") or {}
     project_name = str(project.get("name") or project.get("slug") or "")
 
-    image = render_png(results, project_name=project_name)
+    if not results:
+        image = render_error_png("No valid public page URL was provided.")
+    else:
+        image = render_png(results, project_name=project_name)
 
     output = io.BytesIO()
     image.save(output, format="PNG", optimize=True)
@@ -735,5 +957,5 @@ async def speed_report_image(payload: dict):
     return StreamingResponse(
         output,
         media_type="image/png",
-        headers={"Content-Disposition": 'inline; filename="speed-report.png"'},
+        headers={"Content-Disposition": 'inline; filename="speed-report.png"},
     )
