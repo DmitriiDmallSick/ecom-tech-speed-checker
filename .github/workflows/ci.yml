@@ -1,0 +1,29 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+jobs:
+  python-syntax:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Check Python syntax
+        run: |
+          python -m py_compile health-runner/app.py
+          python -m py_compile speed-runner/app.py
+
+  docker-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build health runner
+        run: docker build -t ecom-health-runner ./health-runner
+      - name: Build speed runner
+        run: docker build -t ecom-speed-runner ./speed-runner
