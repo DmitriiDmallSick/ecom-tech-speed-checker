@@ -1,0 +1,32 @@
+services:
+  health-runner:
+    build:
+      context: ./health-runner
+    ports:
+      - "8081:8080"
+    environment:
+      PORT: "8080"
+      ALLOW_PUBLIC_ACCESS: "false"
+      HEALTH_RUNNER_API_KEY: "change-health-secret"
+      ALLOWED_HOSTS: "example.com"
+      MIN_TIMEOUT_MS: "5000"
+      DEFAULT_TIMEOUT_MS: "45000"
+      MAX_TIMEOUT_MS: "120000"
+      MAX_CONCURRENT_RUNS: "1"
+      QUEUE_TIMEOUT_MS: "300000"
+
+  speed-runner:
+    build:
+      context: ./speed-runner
+    ports:
+      - "8082:8080"
+    environment:
+      PORT: "8080"
+      ALLOW_PUBLIC_ACCESS: "false"
+      SPEED_RUNNER_API_KEY: "change-speed-secret"
+      ALLOWED_HOSTS: "example.com"
+      MIN_TIMEOUT_MS: "5000"
+      DEFAULT_TIMEOUT_MS: "60000"
+      MAX_TIMEOUT_MS: "120000"
+      MAX_CONCURRENT_RUNS: "1"
+      QUEUE_TIMEOUT_MS: "300000"
