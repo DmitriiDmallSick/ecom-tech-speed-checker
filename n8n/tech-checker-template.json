@@ -1,1 +1,793 @@
-
+{
+  "name": "Tech Checker Template",
+  "nodes": [
+    {
+      "parameters": {
+        "updates": [
+          "message"
+        ],
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.telegramTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        -208,
+        -16
+      ],
+      "id": "6e2453e8-ed10-47c8-b381-fb7bfd7e3478",
+      "name": "Telegram Trigger"
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "triggerAtHour": 6
+            },
+            {
+              "triggerAtHour": 16
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        -208,
+        -208
+      ],
+      "id": "ec687ef2-50ea-41fc-8b60-2c1edff37c03",
+      "name": "Schedule Trigger"
+    },
+    {
+      "parameters": {
+        "jsCode": "const REPORT_CHAT_ID = 'TELEGRAM_CHAT_ID_HERE';\n\nconst input = $json;\nconst now = new Date().toISOString();\n\nconst isTelegram = Boolean(input.message && input.message.chat);\n\nconst commandMap = {\n  '/report': 'full',\n  '/health': 'health',\n  '/speed': 'speed',\n  '/help': 'help'\n};\n\nif (isTelegram) {\n  const text = (input.message.text || '').trim();\n  const chatId = String(input.message.chat.id);\n  const messageId = input.message.message_id;\n\n  const commandRaw = text.split(/\\s+/)[0] || '';\n  const command = commandRaw.replace(/@\\w+$/, '').toLowerCase();\n\n  const runMode = commandMap[command] || null;\n\n  return [\n    {\n      json: {\n        source: 'telegram',\n        should_run: Boolean(runMode),\n        chat_id: chatId,\n        message_id: messageId,\n        command,\n        run_mode: runMode || 'unknown',\n        requested_at: now,\n        is_manual: true\n      }\n    }\n  ];\n}\n\nreturn [\n  {\n    json: {\n      source: 'schedule',\n      should_run: true,\n      chat_id: REPORT_CHAT_ID,\n      message_id: null,\n      command: 'schedule',\n      run_mode: 'full',\n      requested_at: now,\n      is_manual: false\n    }\n  }\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        16,
+        -112
+      ],
+      "id": "49687a06-2546-4eb0-ab01-67336841fdf5",
+      "name": "Normalize Run"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "5ea37d85-565b-43f3-9ae1-1a5da2be557e",
+              "leftValue": "={{ $json.should_run }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        240,
+        -112
+      ],
+      "id": "dc689957-7e52-4f6e-9443-47603b05cbde",
+      "name": "Should Run?"
+    },
+    {
+      "parameters": {
+        "chatId": "'TELEGRAM_CHAT_ID_HERE'",
+        "text": "={{\n$json.run_mode === 'help'\n  ? 'Report commands:\\n\\n/report — full report\\n/health — health check only\\n/speed — speed check only\\n/help — command list'\n  : $json.run_mode === 'full'\n    ? ($json.is_manual ? '⏳ Started full report: health check + speed check.' : '⏳ Started scheduled report: health check + speed check.')\n    : $json.run_mode === 'health'\n      ? '⏳ Started site health check.'\n      : $json.run_mode === 'speed'\n        ? '⏳ Started speed check.'\n        : 'Command not recognized.'\n}}",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        688,
+        -176
+      ],
+      "id": "698c7db4-88ae-4218-9376-1e16ac058466",
+      "name": "Send status message"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "2797b940-b379-4d94-ad51-9590bdc0fd6c",
+              "leftValue": "={{ $json.run_mode }}",
+              "rightValue": "help",
+              "operator": {
+                "type": "string",
+                "operation": "notEquals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        912,
+        -112
+      ],
+      "id": "56648582-71d4-4413-b50e-91bcbe71dfdd",
+      "name": "Not Help?"
+    },
+    {
+      "parameters": {
+        "jsCode": "const runMode = $json.run_mode;\n\nconst runHealth = runMode === 'full' || runMode === 'health';\nconst runSpeed = runMode === 'full' || runMode === 'speed';\n\nconst CONFIG = {\n  project_slug: '',\n  project_name: '',\n  base_url: '',\n\n  product_path: '',\n  cart_path: '',\n\n  health_runner_url: '',\n  speed_json_url: '',\n  speed_image_url: '',\n\n  health_timeout_ms: 45000,\n  speed_timeout_ms: 60000,\n\n  selectors: {\n    product_gallery: ''\n  },\n\n  product: {\n    expected_title_contains: '',\n    expected_quantity_after_update: 1,\n    accessory_variants: []\n  },\n\n  expectations: {\n    base_accessory_id: '',\n    expected_paid_accessory_example: '',\n    expected_add_delta: 1,\n    expected_accessory_add_delta: 1,\n    expected_update_delta: 0,\n    expected_double_click_delta: 1,\n    expected_quantity_after_update: 1,\n    motivator_max_discount_total: 30000\n  }\n};\n\nfunction joinUrl(base, path) {\n  if (!base) return '';\n  if (!path) return base.replace(/\\/+$/, '');\n\n  return `${base.replace(/\\/+$/, '')}/${path.replace(/^\\/+/, '')}`;\n}\n\nconst now = new Date();\nconst reportId = `${CONFIG.project_slug || 'project'}_${now.toISOString().replace(/[:.]/g, '-')}`;\n\nconst homeUrl = CONFIG.base_url ? `${CONFIG.base_url.replace(/\\/+$/, '')}/` : '';\nconst productUrl = joinUrl(CONFIG.base_url, CONFIG.product_path);\nconst cartUrl = joinUrl(CONFIG.base_url, CONFIG.cart_path);\n\nreturn [\n  {\n    json: {\n      report_id: reportId,\n\n      source: $json.source,\n      command: $json.command,\n      run_mode: runMode,\n      is_manual: $json.is_manual,\n      requested_at: $json.requested_at,\n\n      telegram: {\n        chat_id: $json.chat_id,\n        message_id: $json.message_id\n      },\n\n      checks: {\n        health: runHealth,\n        speed: runSpeed\n      },\n\n      project: {\n        slug: CONFIG.project_slug,\n        name: CONFIG.project_name,\n        base_url: CONFIG.base_url\n      },\n\n      runners: {\n        health_url: CONFIG.health_runner_url,\n        speed_json_url: CONFIG.speed_json_url,\n        speed_image_url: CONFIG.speed_image_url\n      },\n\n      pages: {\n        home: {\n          id: 'home',\n          title: 'Home',\n          url: homeUrl\n        },\n        product: {\n          id: 'product',\n          title: 'Product page',\n          url: productUrl\n        },\n        cart: {\n          id: 'cart',\n          title: 'Cart',\n          url: cartUrl,\n          requires_added_product: true\n        }\n      },\n\n      health: {\n        timeout_ms: CONFIG.health_timeout_ms,\n\n        selectors: CONFIG.selectors,\n\n        flow: {\n          clear_cart_before_test: true,\n          product_url: productUrl,\n          cart_url: cartUrl,\n\n          checks: [\n            {\n              id: 'product_gallery_visible',\n              title: 'Product gallery visible',\n              page: 'product'\n            },\n            {\n              id: 'product_common_sanity',\n              title: 'Product common.v2, smartCart patch, EventBus',\n              page: 'product'\n            },\n            {\n              id: 'add_product_to_cart',\n              title: 'Add product to cart',\n              page: 'product'\n            },\n            {\n              id: 'add_product_with_accessory',\n              title: 'Add product with accessory',\n              page: 'product'\n            },\n            {\n              id: 'update_accessory_without_quantity_change',\n              title: 'Update accessory without quantity change',\n              page: 'product'\n            },\n            {\n              id: 'double_click_add_guard',\n              title: 'Double click add guard',\n              page: 'product'\n            },\n            {\n              id: 'cart_sanity',\n              title: 'Cart init, common.v2, EventBus',\n              page: 'cart'\n            },\n            {\n              id: 'cart_no_duplicate_lines',\n              title: 'Cart no duplicate lines',\n              page: 'cart'\n            },\n            {\n              id: 'cart_qty_and_total',\n              title: 'Cart quantity and total',\n              page: 'cart'\n            },\n            {\n              id: 'cart_motivator_popup',\n              title: 'Cart motivator popup',\n              page: 'cart'\n            },\n            {\n              id: 'cart_remove_line',\n              title: 'Cart remove line',\n              page: 'cart'\n            }\n          ]\n        },\n\n        product: CONFIG.product,\n\n        expectations: CONFIG.expectations\n      },\n\n      speed: {\n        device: 'desktop',\n        timeout_ms: CONFIG.speed_timeout_ms,\n        profile: 'datacenter'\n      }\n    }\n  }\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1136,
+        -112
+      ],
+      "id": "59c723ba-1248-4bfc-966f-4a7bd2ea4cf8",
+      "name": "Build Report Config"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "ca3fbcac-7f96-4659-bad2-25e540f0911b",
+              "leftValue": "={{ $json.checks.health }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1360,
+        -112
+      ],
+      "id": "03de031a-6541-41d2-9e3a-f11f0e47949b",
+      "name": "Run Health?"
+    },
+    {
+      "parameters": {
+        "jsCode": "return [\n  {\n    json: {\n      ...$json,\n      health_result: {\n        status: 'skipped',\n        skipped: true,\n        summary: {\n          total: 0,\n          passed: 0,\n          warnings: 0,\n          failed: 0\n        },\n        checks: [],\n        errors: [],\n        warnings: [],\n        artifacts: {}\n      }\n    }\n  }\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2032,
+        -16
+      ],
+      "id": "c36d4419-b28e-4d75-8fcf-70bae1f0a3ae",
+      "name": "Skip Health"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "ca3fbcac-7f96-4659-bad2-25e540f0911b",
+              "leftValue": "={{ $json.checks.speed }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        2256,
+        -112
+      ],
+      "id": "e5b2c150-7eb3-4203-9954-933dd935fe17",
+      "name": "Run Speed?"
+    },
+    {
+      "parameters": {
+        "jsCode": "return [\n  {\n    json: {\n      ...$json,\n      speed_result: {\n        ok: false,\n        skipped: true,\n        status: 'skipped',\n        status_title: '⏭️ skipped',\n        telegramMessage: '',\n        booster: {},\n        competitors: {},\n        errors: []\n      }\n    }\n  }\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2928,
+        -16
+      ],
+      "id": "31e873f2-d14b-4627-bbbc-99a3e16c1ffb",
+      "name": "Skip Speed"
+    },
+    {
+      "parameters": {
+        "jsCode": "const data = $json;\n\nfunction statusIcon(status) {\n  if (status === 'ok') return '✅';\n  if (status === 'warn' || status === 'warning') return '⚠️';\n  if (status === 'bad' || status === 'failed' || status === 'error') return '❌';\n  if (status === 'skipped') return '⏭️';\n  return '•';\n}\n\nfunction escapeHtml(value) {\n  return String(value ?? '')\n    .replace(/&/g, '&amp;')\n    .replace(/</g, '&lt;')\n    .replace(/>/g, '&gt;');\n}\n\nfunction cleanError(check) {\n  const raw = check.error || check.actual?.error || '';\n\n  if (!raw) return 'error without message';\n\n  return escapeHtml(\n    String(raw)\n      .replace(/\\n/g, ' ')\n      .replace(/\\s+/g, ' ')\n      .replace('Call log:', '')\n      .trim()\n      .slice(0, 350)\n  );\n}\n\nfunction line(check, okText, failText) {\n  if (!check) {\n    return `❌ ${failText}: check did not return`;\n  }\n\n  if (check.status === 'ok') {\n    return `✅ ${okText}`;\n  }\n\n  if (check.status === 'warning' || check.status === 'warn') {\n    return `⚠️ ${failText}: ${cleanError(check)}`;\n  }\n\n  return `❌ ${failText}: ${cleanError(check)}`;\n}\n\nfunction findCheck(id) {\n  return (data.health_result?.checks || []).find(check => check.id === id);\n}\n\nconst health = data.health_result || {\n  status: 'skipped',\n  skipped: true,\n  summary: {\n    total: 0,\n    passed: 0,\n    warnings: 0,\n    failed: 0\n  },\n  checks: [],\n  errors: [],\n  warnings: []\n};\n\nconst speed = data.speed_result || {\n  status: 'skipped',\n  skipped: true,\n  telegramMessage: '',\n  errors: []\n};\n\nconst timezone = data.timezone || data.report_timezone || 'UTC';\n\nconst date = new Date().toLocaleString('en-GB', {\n  timeZone: timezone,\n  day: '2-digit',\n  month: '2-digit',\n  year: 'numeric',\n  hour: '2-digit',\n  minute: '2-digit'\n});\n\nconst lines = [];\n\nlines.push('📊 <b>Daily report</b>');\n\nif (data.project?.name) {\n  lines.push(`Project: ${escapeHtml(data.project.name)}`);\n}\n\nlines.push(`Date: ${date}`);\nlines.push(`Mode: ${escapeHtml(data.run_mode)}`);\nlines.push('');\n\nif (health.skipped) {\n  lines.push('⏭️ Health check skipped');\n} else {\n  const summary = health.summary || {};\n\n  lines.push(`Health check: ${statusIcon(health.status)} ${summary.passed || 0}/${summary.total || 0} passed`);\n  lines.push('');\n\n  lines.push('<b>Product page:</b>');\n  lines.push(line(\n    findCheck('product_common_sanity'),\n    'Common.v2, smartCart patch and EventBus loaded',\n    'Common.v2, smartCart patch and EventBus'\n  ));\n  lines.push(line(\n    findCheck('product_gallery_visible'),\n    'Product gallery is visible',\n    'Product gallery'\n  ));\n  lines.push(line(\n    findCheck('add_product_to_cart'),\n    'Add to cart works',\n    'Add to cart'\n  ));\n  lines.push(line(\n    findCheck('add_product_with_accessory'),\n    'Adding product with accessory works',\n    'Adding product with accessory'\n  ));\n  lines.push(line(\n    findCheck('update_accessory_without_quantity_change'),\n    'Accessory update does not duplicate quantity',\n    'Accessory update'\n  ));\n  lines.push(line(\n    findCheck('double_click_add_guard'),\n    'Double-click guard works',\n    'Double-click guard'\n  ));\n\n  lines.push('');\n  lines.push('<b>Cart:</b>');\n  lines.push(line(\n    findCheck('cart_sanity'),\n    'Cart init, common.v2 and EventBus loaded',\n    'Cart init, common.v2 and EventBus'\n  ));\n  lines.push(line(\n    findCheck('cart_no_duplicate_lines'),\n    'No duplicate cart lines',\n    'Duplicate cart lines check'\n  ));\n  lines.push(line(\n    findCheck('cart_qty_and_total'),\n    'Quantity and total are valid',\n    'Quantity and total'\n  ));\n  lines.push(line(\n    findCheck('cart_motivator_popup'),\n    'Motivator popup opens and shows content',\n    'Motivator popup'\n  ));\n  lines.push(line(\n    findCheck('cart_remove_line'),\n    'Removing cart line works',\n    'Remove cart line'\n  ));\n\n  if (health.errors && health.errors.length) {\n    lines.push('');\n    lines.push('<b>Health errors:</b>');\n\n    for (const err of health.errors) {\n      if (typeof err === 'string') {\n        lines.push(`❌ ${escapeHtml(err)}`);\n      } else {\n        lines.push(`❌ ${escapeHtml(err.title || err.id || 'Error')}: ${cleanError(err)}`);\n      }\n    }\n  }\n}\n\nif (speed.skipped) {\n  lines.push('');\n  lines.push('⏭️ Speed check skipped');\n} else {\n  lines.push('');\n\n  if (speed.telegramMessage) {\n    lines.push(speed.telegramMessage);\n  } else {\n    lines.push(`⚡ <b>Speed:</b> ${statusIcon(speed.status)} no detailed data`);\n  }\n\n  if (speed.errors && speed.errors.length) {\n    lines.push('');\n    lines.push('<b>Speed errors:</b>');\n\n    for (const err of speed.errors) {\n      lines.push(`❌ ${escapeHtml(typeof err === 'string' ? err : JSON.stringify(err))}`);\n    }\n  }\n}\n\nlet finalStatus = 'ok';\n\nif (\n  (health.summary && health.summary.failed > 0) ||\n  ['bad', 'failed', 'error'].includes(speed.status)\n) {\n  finalStatus = 'failed';\n} else if (\n  (health.summary && health.summary.warnings > 0) ||\n  ['warn', 'warning'].includes(speed.status)\n) {\n  finalStatus = 'warning';\n}\n\nlines.push('');\nlines.push(`<b>Result:</b> ${statusIcon(finalStatus)} ${\n  finalStatus === 'ok'\n    ? 'no critical issues'\n    : finalStatus === 'warning'\n      ? 'warnings found'\n      : 'errors found'\n}`);\n\nreturn [\n  {\n    json: {\n      ...data,\n      final_status: finalStatus,\n      telegram_message: lines.join('\\n')\n    }\n  }\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3152,
+        -112
+      ],
+      "id": "234abbfd-1eee-4473-8098-cbf68ef91baf",
+      "name": "Build Final Text Report"
+    },
+    {
+      "parameters": {
+        "chatId": "'TELEGRAM_CHAT_ID_HERE'",
+        "text": "={{ $('Build Final Text Report').first().json.telegram_message }}",
+        "additionalFields": {
+          "appendAttribution": false,
+          "parse_mode": "HTML"
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        3824,
+        -112
+      ],
+      "id": "6ae3fbec-4b3e-4d75-8b73-96c43145872a",
+      "name": "Send a text message"
+    },
+    {
+      "parameters": {
+        "jsCode": "const data = $json;\n\nconst payload = {\n  report_id: data.report_id,\n\n  project: data.project,\n\n  pages: {\n    home: data.pages.home\n  },\n\n  speed: {\n    device: data.speed?.device || 'desktop',\n    timeout_ms: data.speed?.timeout_ms || 60000,\n    profile: data.speed?.profile || 'datacenter'\n  },\n\n  timeout_ms: data.speed?.timeout_ms || 60000\n};\n\nreturn [\n  {\n    json: {\n      ...data,\n      speed_runner_payload: payload\n    }\n  }\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2480,
+        -208
+      ],
+      "id": "4903efcf-ed9a-47fe-be8a-b0d6d2306894",
+      "name": "Build Speed Runner Payload"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.runners.speed_json_url }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.speed_runner_payload }}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "text"
+            }
+          },
+          "timeout": 300000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        2704,
+        -208
+      ],
+      "id": "ffa2e03f-1993-4467-a1ca-0907be30ab84",
+      "name": "Call Speed Runner"
+    },
+    {
+      "parameters": {
+        "jsCode": "const original = $('Build Speed Runner Payload').first().json;\n\nlet response = $json;\n\nif (response && response.body !== undefined) {\n  response = response.body;\n}\n\nif (response && response.data !== undefined) {\n  response = response.data;\n}\n\nif (typeof response === 'string') {\n  try {\n    response = JSON.parse(response);\n  } catch (error) {\n    response = {\n      ok: false,\n      status: 'error',\n      status_title: '❌ error',\n      telegramMessage: '❌ <b>Speed: error</b>\\n\\nRunner returned invalid JSON.',\n      booster: {},\n      competitors: {},\n      errors: ['Runner returned invalid JSON']\n    };\n  }\n}\n\nif (!response || typeof response !== 'object' || Array.isArray(response)) {\n  response = {\n    ok: false,\n    status: 'error',\n    status_title: '❌ error',\n    telegramMessage: '❌ <b>Speed: error</b>\\n\\nRunner returned empty or invalid response.',\n    booster: {},\n    competitors: {},\n    errors: ['Runner returned empty or invalid response']\n  };\n}\n\nconst speedResult = {\n  ok: response.ok === true,\n  skipped: response.skipped === true,\n  status: response.status || 'error',\n  status_title: response.status_title || '⚠️ unknown status',\n  telegramMessage: response.telegramMessage || '',\n  booster:\n    response.booster && typeof response.booster === 'object'\n      ? response.booster\n      : {},\n  competitors:\n    response.competitors && typeof response.competitors === 'object'\n      ? response.competitors\n      : {},\n  errors: Array.isArray(response.errors) ? response.errors : []\n};\n\nreturn [\n  {\n    json: {\n      ...original,\n      speed_runner_response: response,\n      speed_result: speedResult\n    }\n  }\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2928,
+        -208
+      ],
+      "id": "4e4326b6-8971-4c7a-a553-4a1720e5d764",
+      "name": "Normalize Speed Result"
+    },
+    {
+      "parameters": {
+        "jsCode": "const data = $json;\n\nconst health = data.health || {};\nconst expectations = health.expectations || {};\nconst selectors = health.selectors || {};\n\nconst payload = {\n  report_id: data.report_id,\n\n  project: data.project,\n\n  pages: {\n    home: data.pages.home,\n    product: data.pages.product,\n    cart: data.pages.cart\n  },\n\n  options: {\n    timeout_ms: health.timeout_ms || 45000,\n    make_screenshot_on_error: false,\n    collect_console_errors: false,\n    collect_failed_requests: false,\n    isolate_mutating_tests: true\n  },\n\n  expectations: {\n    base_accessory_id: expectations.base_accessory_id || '',\n    expected_paid_accessory_example: expectations.expected_paid_accessory_example || '',\n    expected_add_delta: expectations.expected_add_delta ?? 1,\n    expected_accessory_add_delta: expectations.expected_accessory_add_delta ?? 1,\n    expected_update_delta: expectations.expected_update_delta ?? 0,\n    expected_double_click_delta: expectations.expected_double_click_delta ?? 1,\n    expected_quantity_after_update: expectations.expected_quantity_after_update ?? 1,\n    motivator_max_discount_total: expectations.motivator_max_discount_total ?? 30000\n  },\n\n  health_tests: {\n    product_page: [\n      {\n        id: 'product_gallery_visible',\n        title: 'Product gallery visible',\n        type: 'visibility',\n        selector: selectors.product_gallery || '',\n        expected: true\n      },\n      {\n        id: 'product_common_sanity',\n        title: 'Product common.v2, smartCart patch, EventBus',\n        type: 'console_evaluate',\n        expected: {\n          common_once: true,\n          smart_cart_add_patched: true,\n          event_bus_type: 'object'\n        }\n      },\n      {\n        id: 'add_product_to_cart',\n        title: 'Add product to cart',\n        type: 'cart_action',\n        expected: {\n          delta: expectations.expected_add_delta ?? 1\n        }\n      },\n      {\n        id: 'add_product_with_accessory',\n        title: 'Add product with accessory',\n        type: 'cart_action_with_accessory',\n        expected: {\n          delta: expectations.expected_accessory_add_delta ?? 1,\n          lines_count: 1,\n          accessory_not_base: true\n        }\n      },\n      {\n        id: 'update_accessory_without_quantity_change',\n        title: 'Update accessory without quantity change',\n        type: 'cart_update_accessory',\n        expected: {\n          delta: expectations.expected_update_delta ?? 0,\n          quantity: expectations.expected_quantity_after_update ?? 1,\n          lines_count: 1,\n          accessory_not_base: true\n        }\n      },\n      {\n        id: 'double_click_add_guard',\n        title: 'Double click add guard',\n        type: 'double_click_guard',\n        expected: {\n          delta: expectations.expected_double_click_delta ?? 1,\n          no_duplicate_lines: true\n        }\n      }\n    ],\n\n    cart_page: [\n      {\n        id: 'cart_sanity',\n        title: 'Cart init, common.v2, EventBus',\n        type: 'cart_sanity',\n        requires_product_in_cart: true,\n        expected: {\n          cart_motivator_initialized: true,\n          common_once: true,\n          event_bus_type: 'object'\n        }\n      },\n      {\n        id: 'cart_no_duplicate_lines',\n        title: 'Cart no duplicate lines',\n        type: 'cart_no_duplicates',\n        requires_product_in_cart: true,\n        expected: {\n          ok: true\n        }\n      },\n      {\n        id: 'cart_qty_and_total',\n        title: 'Cart quantity and total',\n        type: 'cart_qty_total',\n        requires_product_in_cart: true,\n        expected: {\n          qty_gt_zero: true,\n          total_price_gt_zero: true\n        }\n      },\n      {\n        id: 'cart_motivator_popup',\n        title: 'Cart motivator popup',\n        type: 'cart_motivator_popup',\n        requires_product_in_cart: true,\n        expected: {\n          cards_gt_zero_or_total_gte_max: true\n        }\n      },\n      {\n        id: 'cart_remove_line',\n        title: 'Cart remove line',\n        type: 'cart_remove_line',\n        requires_product_in_cart: true,\n        destructive: true,\n        expected: {\n          lines_decreased: true\n        }\n      }\n    ]\n  }\n};\n\nreturn [\n  {\n    json: {\n      ...data,\n      health_runner_payload: payload\n    }\n  }\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1584,
+        -208
+      ],
+      "id": "1a02adec-8ed9-4d52-8a6d-a45439ef7764",
+      "name": "Build Health Runner Payload"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.runners.health_url }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.health_runner_payload }}",
+        "options": {
+          "timeout": 300000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1808,
+        -208
+      ],
+      "id": "9544a99d-34ec-4929-8c81-1fb02f3dbd8c",
+      "name": "Call Health Runner"
+    },
+    {
+      "parameters": {
+        "jsCode": "const original = $('Build Health Runner Payload').first().json;\n\nlet response = $json;\n\nif (response && response.body !== undefined) {\n  response = response.body;\n}\n\nif (response && response.data !== undefined) {\n  response = response.data;\n}\n\nif (typeof response === 'string') {\n  try {\n    response = JSON.parse(response);\n  } catch (error) {\n    response = {\n      status: 'error',\n      skipped: false,\n      summary: {\n        total: 0,\n        passed: 0,\n        warnings: 0,\n        failed: 1\n      },\n      checks: [],\n      errors: ['Health runner returned invalid JSON'],\n      warnings: []\n    };\n  }\n}\n\nif (!response || typeof response !== 'object' || Array.isArray(response)) {\n  response = {\n    status: 'error',\n    skipped: false,\n    summary: {\n      total: 0,\n      passed: 0,\n      warnings: 0,\n      failed: 1\n    },\n    checks: [],\n    errors: ['Health runner returned empty or invalid response'],\n    warnings: []\n  };\n}\n\nconst healthResult = {\n  status: response.status || 'error',\n  skipped: response.skipped === true,\n  summary: response.summary || {\n    total: 0,\n    passed: 0,\n    warnings: 0,\n    failed: 1\n  },\n  checks: Array.isArray(response.checks) ? response.checks : [],\n  errors: Array.isArray(response.errors) ? response.errors : [],\n  warnings: Array.isArray(response.warnings) ? response.warnings : [],\n  artifacts: response.artifacts || {}\n};\n\nreturn [\n  {\n    json: {\n      ...original,\n      health_runner_response: response,\n      health_result: healthResult\n    }\n  }\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2032,
+        -208
+      ],
+      "id": "a449fd33-29be-42de-94c9-dc02f9b89f6f",
+      "name": "Normalize Health Result"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "{{ $json.runners.speed_image_url }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{{ $json.speed_runner_payload }}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "file"
+            }
+          },
+          "timeout": 300000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        4048,
+        -112
+      ],
+      "id": "ed005652-2175-423f-bca0-cff83c20abf6",
+      "name": "Call Speed PNG"
+    },
+    {
+      "parameters": {
+        "operation": "sendPhoto",
+        "chatId": "'TELEGRAM_CHAT_ID_HERE'",
+        "binaryData": true,
+        "additionalFields": {
+          "caption": ""
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        4272,
+        -112
+      ],
+      "id": "6416c882-5f18-4e70-940a-c7d46d2ccbd2",
+      "name": "Send PNG"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "16e2c27c-759a-47ae-9b56-a2ab49464a7e",
+              "leftValue": "={{ $json.is_manual === true }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        464,
+        -112
+      ],
+      "id": "748d5054-9ae4-4465-9125-92d44ad0146c",
+      "name": "Manual Run?"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "16e2c27c-759a-47ae-9b56-a2ab49464a7e",
+              "leftValue": "={{ $json.is_manual === true }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        3376,
+        -112
+      ],
+      "id": "fce2fe8c-84cb-4355-8105-79ce6fd8be98",
+      "name": "Manual Run Before Delete?"
+    },
+    {
+      "parameters": {
+        "operation": "deleteMessage",
+        "chatId": "'TELEGRAM_CHAT_ID_HERE'",
+        "messageId": "={{ $('Send status message').first().json.message_id || $('Send status message').first().json.result?.message_id }}"
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        3600,
+        -176
+      ],
+      "id": "21b2a5df-505e-4ba5-b74c-d43229147a2b",
+      "name": "Delete a chat message"
+    }
+  ],
+  "connections": {
+    "Telegram Trigger": {
+      "main": [
+        [
+          {
+            "node": "Normalize Run",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "Normalize Run",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Run": {
+      "main": [
+        [
+          {
+            "node": "Should Run?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Should Run?": {
+      "main": [
+        [
+          {
+            "node": "Manual Run?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Not Help?": {
+      "main": [
+        [
+          {
+            "node": "Build Report Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Report Config": {
+      "main": [
+        [
+          {
+            "node": "Run Health?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Run Health?": {
+      "main": [
+        [
+          {
+            "node": "Build Health Runner Payload",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Skip Health",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Skip Health": {
+      "main": [
+        [
+          {
+            "node": "Run Speed?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Run Speed?": {
+      "main": [
+        [
+          {
+            "node": "Build Speed Runner Payload",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Skip Speed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Skip Speed": {
+      "main": [
+        [
+          {
+            "node": "Build Final Text Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Final Text Report": {
+      "main": [
+        [
+          {
+            "node": "Manual Run Before Delete?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Speed Runner Payload": {
+      "main": [
+        [
+          {
+            "node": "Call Speed Runner",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call Speed Runner": {
+      "main": [
+        [
+          {
+            "node": "Normalize Speed Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Speed Result": {
+      "main": [
+        [
+          {
+            "node": "Build Final Text Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Health Runner Payload": {
+      "main": [
+        [
+          {
+            "node": "Call Health Runner",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call Health Runner": {
+      "main": [
+        [
+          {
+            "node": "Normalize Health Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Health Result": {
+      "main": [
+        [
+          {
+            "node": "Run Speed?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send a text message": {
+      "main": [
+        [
+          {
+            "node": "Call Speed PNG",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call Speed PNG": {
+      "main": [
+        [
+          {
+            "node": "Send PNG",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Manual Run?": {
+      "main": [
+        [
+          {
+            "node": "Send status message",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Not Help?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Manual Run Before Delete?": {
+      "main": [
+        [
+          {
+            "node": "Delete a chat message",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send a text message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Delete a chat message": {
+      "main": [
+        [
+          {
+            "node": "Send a text message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send status message": {
+      "main": [
+        [
+          {
+            "node": "Not Help?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false,
+    "timeSavedMode": "fixed",
+    "timezone": "Europe/Moscow",
+    "callerPolicy": "workflowsFromSameOwner"
+  }
+}
