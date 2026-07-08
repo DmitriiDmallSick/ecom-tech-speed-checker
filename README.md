@@ -23,6 +23,37 @@ The template is platform-agnostic. The runners are simple HTTP services and can 
 
 ![Work sample](./docs/images/1.jpg)
 
+## Table of contents
+
+- [What problem does it solve?](#what-problem-does-it-solve)
+- [Who is it for?](#who-is-it-for)
+- [What does it check?](#what-does-it-check)
+  - [Health checks](#health-checks)
+  - [Speed checks](#speed-checks)
+  - [Telegram report](#telegram-report)
+- [How it works](#how-it-works)
+- [Architecture](#architecture)
+- [Deployment options](#deployment-options)
+- [Project structure](#project-structure)
+- [Requirements](#requirements)
+- [Quick start](#quick-start)
+- [Telegram commands](#telegram-commands)
+- [Configuration](#configuration)
+- [Security notes](#security-notes)
+- [Limitations](#limitations)
+- [Roadmap ideas](#roadmap-ideas)
+- [Contributing](#contributing)
+- [License](#license)
+
+### Documentation
+
+| File | Purpose |
+|---|---|
+| [CONFIGURATION.md](CONFIGURATION.md) | Step-by-step n8n workflow configuration after import |
+| [DEPLOY.md](DEPLOY.md) | Runner environment variables, local build/run, smoke tests, production checklist |
+| [RUNBOOK.md](RUNBOOK.md) | Operating, testing, debugging, rebuilding, and redeploying the runners and workflow |
+| [SECURITY.md](SECURITY.md) | Secrets handling, SSRF/URL safety, known limitations, public-template checklist |
+
 ## What problem does it solve?
 
 Most uptime monitors only answer one question: “Is the website responding?”
@@ -229,6 +260,8 @@ speed_image_url
 
 These URLs are configured inside the `Build Report Config` node in n8n.
 
+See [DEPLOY.md](DEPLOY.md) for per-platform environment variables, local build/run steps, smoke tests, and the production checklist.
+
 ## Project structure
 
 Recommended repository structure:
@@ -236,7 +269,11 @@ Recommended repository structure:
 ```text
 ecom-tech-speed-checker/
 ├── README.md
+├── CONFIGURATION.md
+├── DEPLOY.md
 ├── RUNBOOK.md
+├── SECURITY.md
+├── docker-compose.example.yml
 ├── n8n/
 │   └── tech-checker-template.json
 ├── health-runner/
@@ -267,9 +304,21 @@ Contains the HTTP service that runs browser-based speed checks.
 
 It returns a JSON summary for the Telegram report and can generate a PNG speed summary table.
 
-### `RUNBOOK.md`
+### [`RUNBOOK.md`](RUNBOOK.md)
 
 Contains operational notes: how to rebuild runners, redeploy containers, test endpoints, and debug failed checks.
+
+### [`CONFIGURATION.md`](CONFIGURATION.md)
+
+Step-by-step guide for filling in the `Build Report Config` node and the other n8n settings after import.
+
+### [`DEPLOY.md`](DEPLOY.md)
+
+Runner environment variables, local build/run steps, smoke tests, and the production checklist.
+
+### [`SECURITY.md`](SECURITY.md)
+
+Secrets handling, SSRF/URL safety notes, known limitations, and the public-template checklist.
 
 ## Requirements
 
@@ -350,7 +399,7 @@ expectations
 
 6. Enable the schedule only after manual `/report` works correctly.
 
-For detailed configuration, see `CONFIGURATION.md`.
+For detailed configuration, see [CONFIGURATION.md](CONFIGURATION.md).
 
 ## Telegram commands
 
@@ -386,11 +435,7 @@ The template is intentionally shipped with empty configuration values.
 
 This makes it safer to publish and easier to adapt for another ecommerce project.
 
-Detailed setup instructions are available in:
-
-```text
-CONFIGURATION.md
-```
+Detailed setup instructions are available in [CONFIGURATION.md](CONFIGURATION.md).
 
 ## Security notes
 
@@ -409,7 +454,7 @@ Before publishing your workflow, check that it does not contain:
 
 The provided workflow template does not require credentials to be stored in the JSON file. After importing the workflow into n8n, connect your own Telegram credentials manually.
 
-For a detailed checklist, see `SECURITY.md`.
+Both runners validate request URLs against an `ALLOWED_HOSTS` allowlist and reject non-public/internal addresses, check API keys with a constant-time comparison, disable their `/docs` and `/openapi.json` routes, and log request outcomes without logging secrets. This SSRF protection has one documented edge case (DNS rebinding) — see [SECURITY.md](SECURITY.md) for the known limitation and a detailed checklist.
 
 ## Limitations
 
@@ -444,6 +489,7 @@ Possible future improvements:
 - Docker Compose example for VPS deployment
 - configurable competitor/reference pages
 - historical report storage
+- reuse a single warm browser instance across requests instead of launching Chromium per call, to cut cold-start latency under `MAX_CONCURRENT_RUNS=1`
 
 ## Contributing
 

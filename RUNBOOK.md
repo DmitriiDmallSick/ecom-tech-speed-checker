@@ -1,5 +1,7 @@
 # Runbook
 
+See also: [README](README.md) · [CONFIGURATION](CONFIGURATION.md) · [DEPLOY](DEPLOY.md) · [SECURITY](SECURITY.md)
+
 This runbook explains how to operate, test, debug, rebuild, and redeploy the ecommerce tech checker.
 
 The project consists of:
@@ -63,6 +65,23 @@ These URLs are configured in the n8n node:
 ```text
 Build Report Config
 ```
+
+## Runner logs
+
+Both runners log to stdout/stderr using Python's standard `logging` module, so they show up in
+whatever log viewer your hosting platform provides for the container (Yandex Cloud Serverless
+Containers logs, Cloud Run logs, `docker logs`, etc.).
+
+What gets logged:
+
+- request start and finish for `/health-check` and the speed endpoints, including `report_id`,
+  final status, and duration in milliseconds
+- rejected requests with a missing or invalid API key (client host only — never the key itself)
+- `429` responses when the runner is busy (`MAX_CONCURRENT_RUNS` reached)
+- unhandled exceptions from an individual check or site measurement, with traceback
+
+Set `LOG_LEVEL` (env var, default `INFO`) to `DEBUG`, `WARNING`, or `ERROR` to change verbosity. See
+[DEPLOY.md](DEPLOY.md) for where to set it.
 
 ## Local runner test
 
@@ -315,7 +334,7 @@ Also check the binary output of `Call Speed PNG`.
 
 ### Runner returns invalid JSON
 
-Check the runner logs.
+Check the [runner logs](#runner-logs).
 
 In n8n, check:
 
@@ -363,6 +382,7 @@ telegramApi
 Telegram bot token
 real Telegram chat ID
 private runner URLs
+real runner API keys
 real project domains
 product IDs
 variant IDs
@@ -370,6 +390,11 @@ customer data
 order data
 logs with private data
 ```
+
+Prefer `$env.HEALTH_RUNNER_API_KEY` / `$env.SPEED_RUNNER_API_KEY` / `$env.REPORT_CHAT_ID` (or Header
+Auth credentials) over literal values in `Build Report Config` / `Normalize Run` — see
+[CONFIGURATION.md](CONFIGURATION.md#hardcoded-runner-api-keys) — so a real secret can't end up in
+the exported JSON in the first place.
 
 Safe template placeholders:
 
@@ -379,8 +404,10 @@ project_slug: ''
 project_name: ''
 base_url: ''
 health_runner_url: ''
+health_runner_api_key: ''
 speed_json_url: ''
 speed_image_url: ''
+speed_runner_api_key: ''
 ```
 
 ## Recovery checklist

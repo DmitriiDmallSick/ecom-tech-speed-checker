@@ -14,6 +14,7 @@ services:
       MAX_TIMEOUT_MS: "120000"
       MAX_CONCURRENT_RUNS: "1"
       QUEUE_TIMEOUT_MS: "300000"
+      LOG_LEVEL: "INFO"
 
   speed-runner:
     build:
@@ -30,3 +31,4 @@ services:
       MAX_TIMEOUT_MS: "120000"
       MAX_CONCURRENT_RUNS: "1"
       QUEUE_TIMEOUT_MS: "300000"
+      LOG_LEVEL: "INFO"

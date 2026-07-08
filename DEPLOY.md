@@ -1,5 +1,7 @@
 # Deploy
 
+See also: [README](README.md) · [CONFIGURATION](CONFIGURATION.md) · [RUNBOOK](RUNBOOK.md) · [SECURITY](SECURITY.md)
+
 This guide describes the minimum deployment setup for the n8n ecommerce tech checker template.
 
 ## Components
@@ -28,6 +30,7 @@ DEFAULT_TIMEOUT_MS=45000
 MAX_TIMEOUT_MS=120000
 MAX_CONCURRENT_RUNS=1
 QUEUE_TIMEOUT_MS=300000
+LOG_LEVEL=INFO
 ```
 
 ### Speed runner
@@ -42,9 +45,12 @@ DEFAULT_TIMEOUT_MS=60000
 MAX_TIMEOUT_MS=120000
 MAX_CONCURRENT_RUNS=1
 QUEUE_TIMEOUT_MS=300000
+LOG_LEVEL=INFO
 ```
 
 Use different API keys for health and speed if possible.
+
+`LOG_LEVEL` controls the runner's own log verbosity (`DEBUG`, `INFO`, `WARNING`, `ERROR`; default `INFO`). Both runners log request start/finish, rejected auth attempts, and unhandled check/measurement errors — check your platform's container logs when a run fails.
 
 ## Build locally
 

@@ -1,5 +1,7 @@
 # Configuration
 
+See also: [README](README.md) · [DEPLOY](DEPLOY.md) · [RUNBOOK](RUNBOOK.md) · [SECURITY](SECURITY.md)
+
 This guide explains how to configure the n8n workflow after importing the template.
 
 The workflow is designed so that most project-specific settings are stored in one place:
@@ -81,6 +83,8 @@ const REPORT_CHAT_ID = '-1001234567890';
 
 Use your own chat ID or group ID.
 
+Where possible, prefer an n8n environment variable (`$env.REPORT_CHAT_ID`) over a literal value in the Code node — see [SECURITY.md](SECURITY.md#secrets) for why this matters if you re-export the workflow later.
+
 ## 4. Configure `Build Report Config`
 
 Most project-specific settings are stored in one node:
@@ -105,8 +109,10 @@ const CONFIG = {
   cart_path: '',
 
   health_runner_url: '',
+  health_runner_api_key: '',
   speed_json_url: '',
-  speed_image_url: ''
+  speed_image_url: '',
+  speed_runner_api_key: ''
 };
 ```
 
@@ -118,8 +124,14 @@ const CONFIG = {
 | `product_path` | Path to a test product page | `/products/test-product` |
 | `cart_path` | Path to the cart page | `/cart_items` |
 | `health_runner_url` | Public HTTP endpoint for the health runner | `https://your-health-runner.example.com/health-check` |
+| `health_runner_api_key` | Value sent as the `x-api-key` header to the health runner; must match `HEALTH_RUNNER_API_KEY` on that runner | see [DEPLOY.md](DEPLOY.md) |
 | `speed_json_url` | Public HTTP endpoint for speed JSON report | `https://your-speed-runner.example.com/speed-report-json` |
 | `speed_image_url` | Public HTTP endpoint for speed PNG report | `https://your-speed-runner.example.com/speed-report-image` |
+| `speed_runner_api_key` | Value sent as the `x-api-key` header to the speed runner; must match `SPEED_RUNNER_API_KEY` on that runner | see [DEPLOY.md](DEPLOY.md) |
+
+As with the chat ID above, prefer reading these two keys from n8n environment variables
+(`$env.HEALTH_RUNNER_API_KEY`, `$env.SPEED_RUNNER_API_KEY`) instead of pasting the real secret into
+the Code node — see [SECURITY.md](SECURITY.md#secrets).
 
 The workflow builds full page URLs automatically from:
 
@@ -265,8 +277,10 @@ base_url
 product_path
 cart_path
 health_runner_url
+health_runner_api_key
 speed_json_url
 speed_image_url
+speed_runner_api_key
 selectors.product_gallery
 ```
 
@@ -544,6 +558,14 @@ HTTP nodes should use expressions:
 ={{ $json.runners.speed_json_url }}
 ={{ $json.runners.speed_image_url }}
 ```
+
+### Hardcoded runner API keys
+
+`health_runner_api_key` and `speed_runner_api_key` in `Build Report Config` end up in the exported
+JSON as plain text if you fill them in directly, the same way a hardcoded URL or chat ID would.
+Prefer `$env.HEALTH_RUNNER_API_KEY` / `$env.SPEED_RUNNER_API_KEY`, or move the `x-api-key` header
+into an n8n Header Auth credential on `Call Health Runner`, `Call Speed Runner`, and `Call Speed PNG`
+instead. See [SECURITY.md](SECURITY.md#secrets).
 
 ### Hardcoded Telegram chat IDs
 
