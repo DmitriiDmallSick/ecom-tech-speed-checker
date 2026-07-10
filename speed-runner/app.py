@@ -3,6 +3,7 @@ import hmac
 import html
 import io
 import ipaddress
+import logging
 import os
 import socket
 import time
@@ -14,6 +15,9 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from PIL import Image, ImageChops, ImageDraw, ImageFont, ImageStat
 from playwright.async_api import async_playwright
+
+logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"), format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+logger = logging.getLogger("speed-runner")
 
 
 def env_int(name, default):
@@ -31,7 +35,7 @@ def clamp(value, default, minimum, maximum):
     return max(minimum, min(value, maximum))
 
 
-app = FastAPI(title="Ecommerce Speed Runner")
+app = FastAPI(title="Ecommerce Speed Runner", docs_url=None, redoc_url=None, openapi_url=None)
 
 MIN_TIMEOUT_MS = max(1000, env_int("MIN_TIMEOUT_MS", 5000))
 MAX_TIMEOUT_MS = max(MIN_TIMEOUT_MS, env_int("MAX_TIMEOUT_MS", 120000))
@@ -141,6 +145,11 @@ def public_ip(value):
     return not (ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved or ip.is_multicast or ip.is_unspecified)
 
 
+# NOTE: this check resolves DNS once and caches the result for the process lifetime, while the
+# actual navigation is done later by Chromium with its own DNS resolution. A host under attacker
+# control could answer with a public IP here and a private IP at connect time (DNS rebinding).
+# This is an accepted, documented limitation (see SECURITY.md) — keep ALLOWED_HOSTS restricted to
+# domains you trust and do not point this runner at arbitrary third-party URLs.
 @lru_cache(maxsize=512)
 def public_host(value):
     value = (value or "").lower().strip(".")
@@ -179,6 +188,7 @@ async def require_api_key(request: Request):
     if authorization.lower().startswith("bearer "):
         provided = authorization[7:].strip()
     if not provided or not hmac.compare_digest(provided, SPEED_RUNNER_API_KEY):
+        logger.warning("Rejected request with invalid or missing API key from %s", request.client.host if request.client else "unknown")
         raise HTTPException(status_code=401, detail="Invalid API key")
 
 
@@ -373,6 +383,7 @@ async def measure_site(browser, site, timeout_ms):
         }
         return {"name": site["name"], "url": site["url"], "metrics": metrics}
     except Exception as error:
+        logger.exception("Measurement failed for %s", site.get("url", ""))
         return {"name": site.get("name", "Page"), "url": site.get("url", ""), "metrics": {"visual_ready_sec": 0, "dom_sec": 0, "onload_sec": 0, "max_request_sec": 0, "failed_status0": 0, "slow_3": 0, "slow_10": 0, "origin_requests": 0, "cdn_requests": 0, "third_party_requests": 0, "image_count": 0, "image_max_sec": 0, "load_error": str(error)[:300], "top_slow": []}}
     finally:
         try:
@@ -523,18 +534,24 @@ async def run_speed_results(payload):
     timeout_ms = get_timeout_ms(payload)
     sites = extract_sites(payload)
     if not sites:
+        logger.info("Skipped: no valid public page URL in payload")
         return []
     try:
         await asyncio.wait_for(RUN_LOCK.acquire(), timeout=QUEUE_TIMEOUT_MS / 1000)
     except asyncio.TimeoutError as error:
+        logger.warning("Rejected: runner busy")
         raise HTTPException(status_code=429, detail="Runner is busy") from error
+    started = time.monotonic()
+    logger.info("Starting speed measurement for %d site(s)", len(sites))
     try:
         async with async_playwright() as playwright:
             browser = await playwright.chromium.launch(headless=True, args=BROWSER_ARGS)
             try:
-                return [await measure_site(browser, site, timeout_ms) for site in sites]
+                results = [await measure_site(browser, site, timeout_ms) for site in sites]
             finally:
                 await browser.close()
+        logger.info("Finished speed measurement duration_ms=%d", int((time.monotonic() - started) * 1000))
+        return results
     finally:
         RUN_LOCK.release()
 
